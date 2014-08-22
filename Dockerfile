@@ -32,10 +32,9 @@ RUN XML2_CONFIG=`which xml2-config` cd $SOURCE_DIR && ./configure --prefix=$BUIL
 
 # install jsquery
 RUN git clone https://github.com/akorotkov/jsquery.git $SOURCE_DIR/contrib/jsquery
-ENV JSQUERY_V bfa87d1df0e2417a92c3ed204ebf4aa63e3b0d9c
 
 USER dba
-RUN cd $SOURCE_DIR/contrib/jsquery && git checkout $JSQUERY_V && make && make install
+RUN cd $SOURCE_DIR/contrib/jsquery && git pull && make && make install
 
 RUN mkdir $PGDATA
 RUN ls -lah $PG_BIN
@@ -44,4 +43,4 @@ RUN echo "host all  all    0.0.0.0/0  md5" >> $PGDATA/pg_hba.conf && echo "liste
 
 # Expose the PostgreSQL port
 EXPOSE 5777
-CMD ["$PG_BIN/pg_ctl", "-D", "$PGDATA", "start"]
+CMD ["/home/dba/bin/pg_ctl", "-D", "/home/dba/data", "start"]
