@@ -3,44 +3,56 @@ MAINTAINER Nikolay Ryzhikov <niquola@gmail.com>, Mike Lapshin <mikhail.a.lapshin
 
 RUN apt-get -qq update
 RUN apt-get -qqy install git build-essential gettext libreadline6 libreadline6-dev zlib1g-dev flex bison libxml2-dev libxslt-dev || echo 'Ups. No sudo'
-RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 
-RUN locale-gen
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen
 
-RUN useradd -m -s /bin/bash dba
-RUN echo "dba:qwerty"|chpasswd
-RUN adduser dba sudo
+RUN useradd -m -s /bin/bash db && echo "db:db"|chpasswd && adduser db sudo
+RUN echo 'db ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
 
-USER dba
-ENV BUILD_DIR /home/dba
+USER db
+ENV HOME /home/db
+ENV PG_BRANCH REL9_4_STABLE
+ENV PG_REPO git://git.postgresql.org/git/postgresql.git
 
-ENV PGDATA /home/dba/data
-ENV PGPORT 5777
+RUN git clone -b $PG_BRANCH --depth=1 $PG_REPO $HOME/src
+RUN cd $HOME/src && ./configure --prefix=$HOME/bin && make && make install
+
+ENV SOURCE_DIR $HOME/src
+
+ENV PATH $HOME/bin/bin:$PATH
+ENV PGDATA $HOME/data
+ENV PGPORT 5432
 ENV PGHOST localhost
-ENV SOURCE_DIR /home/dba/src
-ENV PG_BIN /home/dba/bin
-ENV PG_CONFIG /home/dba
+RUN mkdir -p $PGDATA
+RUN initdb -D $PGDATA -E utf8
 
-USER dba
+RUN echo "host all  all    0.0.0.0/0  md5" >> $PGDATA/pg_hba.conf
+RUN echo "listen_addresses='*'" >> $PGDATA/postgresql.conf
+RUN echo "port=$PGPORT" >> $PGDATA/postgresql.conf
 
-RUN echo $LC_ALL
-RUN locale
+RUN pg_ctl -D $HOME/data -w start && psql postgres -c "alter user db with password 'db';"
 
-# install postgresql
-RUN git clone -b REL9_4_STABLE --depth=1 git://git.postgresql.org/git/postgresql.git  $SOURCE_DIR	
-RUN XML2_CONFIG=`which xml2-config` cd $SOURCE_DIR && ./configure --prefix=$BUILD_DIR --with-libxml && make && make install
+RUN pg_ctl -D $HOME/data -w start && \
+    cd $SOURCE_DIR/contrib/pgcrypto && \
+    make && make install && make installcheck && \
+    pg_ctl -w stop
 
-# install jsquery
-RUN git clone https://github.com/akorotkov/jsquery.git $SOURCE_DIR/contrib/jsquery
+RUN pg_ctl -D $HOME/data -w start && \
+    cd $SOURCE_DIR/contrib && \
+    git clone https://github.com/akorotkov/jsquery.git && \
+    cd jsquery && make && make install && make installcheck && \
+    pg_ctl -w stop
 
-USER dba
-RUN cd $SOURCE_DIR/contrib/jsquery && git pull && make && make install
+ADD fhir.sql $HOME/fhir.sql
 
-RUN mkdir $PGDATA
-RUN ls -lah $PG_BIN
-RUN $PG_BIN/initdb -D $PGDATA -E utf8
-RUN echo "host all  all    0.0.0.0/0  md5" >> $PGDATA/pg_hba.conf && echo "listen_addresses='*'\nport=$PGPORT" >> $PGDATA/postgresql.conf
+RUN pg_ctl -D $HOME/data -w start && \
+    sudo apt-get install wget unzip && \
+    cd ~/ && \
+    wget http://www.hl7.org/documentcenter/public/standards/FHIR/examples-json.zip && \
+    unzip *.zip -d fhir && \
+    cat $HOME/fhir.sql | psql postgres && \
+    ls fhir/*json | xargs -I {} bash -c 'echo -e "\set js \`cat {}\`\n INSERT INTO resources (content) SELECT :\x27js\x27::jsonb" | psql day_of_jsquery' && \
+    pg_ctl -w stop
 
-# Expose the PostgreSQL port
-EXPOSE 5777
-CMD ["/home/dba/bin/pg_ctl", "-D", "/home/dba/data", "start"]
+EXPOSE 5432
+CMD pg_ctl -D $HOME/data -w start && psql postgres
