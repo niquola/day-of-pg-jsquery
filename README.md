@@ -1,9 +1,4 @@
-# Postgresql JSON query language
-
-## Plan
-
-## JSON(b) query language for postgresql
-
+# jsquery  - query language for jsonb in postgres
 
 New binary storage format for JSON with name [*JSONB*](http://www.postgresql.org/docs/9.4/static/datatype-json.html)
 was introduced in Postgresql 9.4 by [Russian pg team](http://obartunov.livejournal.com/177247.html).
@@ -18,9 +13,9 @@ postgresql extension  *jsquery*.
 ## Installation
 
 Source code of *jsquery* is located at https://github.com/akorotkov/jsquery).
-Installation requires requires PostgreSQL 9.4.
+Installation requires PostgreSQL 9.4.
 
-If you already have postgres 9.4, you can build jsquery from sources:
+If you have postgres 9.4, you can build jsquery from sources:
 
 ```bash
 cd $PG_SOURCE_DIR/contrib
@@ -29,7 +24,7 @@ cd jsquery
 make && make install && make installcheck
 ```
 
-For this tutorial i've created docker image `niquola/jsquery`.
+For this tutorial i've created docker image [niquola/day-of-pg-jsquery](https://registry.hub.docker.com/u/niquola/day-of-pg-jsquery/)
 
 Image is defined by [Dockerfile](https://github.com/niquola/day-of-pg-jsquery/blob/master/Dockerfile)
 and contains postgresql-9.4 built from sources with jsquery and pgcrypto extensions.
@@ -42,7 +37,7 @@ If you have installed [docker](https://docs.docker.com/),
 just run new container:
 
 ```
-docker run --name=jsquery -p 5432:5555 -i -t niquola/jsquery
+docker run --name=jsquery -p 5432:5555 -i -t niquola/day-of-pg-jsquery
 ```
 
 This will start docker container and open psql.
@@ -174,14 +169,14 @@ For json document:
 }
 ```
 
-We could query for "Male" as
+We could query for "Male" as:
 
 * geneder.display = "Male"
 * %.% = "Male"
 * * = "Male"
 
 When we have array in path, we should use
-*#* - any element of array:
+*#* (any element of array):
 
 ```
 name.#.given.# = "Peter"
@@ -293,7 +288,135 @@ FROM resources
 
 ## INDEXING
 
-## HINTS
+Generate more patients:
+
+```sql
+-- simple template function
+CREATE FUNCTION
+template(_tpl_ text, variadic _bindings varchar[]) RETURNS text AS $$
+DECLARE
+  result text := _tpl_;
+BEGIN
+  FOR i IN 1..(array_upper(_bindings, 1)/2) LOOP
+    result := replace(result, '{{' || _bindings[i*2 - 1] || '}}', coalesce(_bindings[i*2], ''));
+  END LOOP;
+  RETURN result;
+END
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+INSERT INTO resources (content)
+SELECT template($JSON$
+{
+  "resourceType":"Patient",
+  "test": true,
+  "identifier":[{"system":"local", "code": "{{idx}}"}],
+  "name":[{"given":["pt-{{idx}}"], "family": ["family-{{idx}}"]}]
+}
+$JSON$::text,
+'idx', generate_series::varchar
+)::jsonb
+FROM generate_series(1,1000000);
+```
+
+Select patient with name 'pt-77777' and measure time:
+
+```
+\timing
+-- Timing is on.
+
+SELECT content->'name' as name
+  FROM resources
+ WHERE content @@ 'name.#.given && ["pt-66666"]'
+
+--                       name
+---------------------------------------------------------
+-- [{"given": ["pt-66666"], "family": ["family-66666"]}]
+-- (1 row)
+--
+-- Time: 585,828 ms
+```
+
+We could index documents using [GIN index](http://www.postgresql.org/docs/9.4/static/textsearch-indexes.html).
+
+```sql
+CREATE INDEX index_content ON
+resources USING GIN (content jsonb_value_path_ops);
+
+\timing
+-- Timing is on.
+
+SELECT content->'name' as name
+  FROM resources
+ WHERE content @@ 'name.#.given && ["pt-66666"]'
+
+--                       name
+---------------------------------------------------------
+-- [{"given": ["pt-66666"], "family": ["family-66666"]}]
+-- (1 row)
+--
+-- Time: 2,401 ms
+
+SELECT content->'name' as name
+  FROM resources
+ WHERE content @@ '* = "family-66666"'
+
+--                         name
+---------------------------------------------------------
+-- [{"given": ["pt-66666"], "family": ["family-66666"]}]
+-- (1 row)
+--
+-- Time: 3,124 ms
+```
+
+Use explain analyse to inspect query plan:
+
+```sql
+EXPLAIN ANALYSE
+ SELECT content->'name' as name
+   FROM resources
+  WHERE content @@ '* = "family-66666"'
+
+--                                                        QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------
+-- Bitmap Heap Scan on resources  (cost=35.75..3466.12 rows=1000 width=207) (actual time=0.104..0.105 rows=1 loops=1)
+--   Recheck Cond: (content @@ '* = "family-66666"'::jsquery)
+--   Heap Blocks: exact=1
+--   ->  Bitmap Index Scan on index_content  (cost=0.00..35.50 rows=1000 width=0) (actual time=0.068..0.068 rows=1 loops=1)
+--         Index Cond: (content @@ '* = "family-66666"'::jsquery)
+-- Planning time: 0.824 ms
+-- Execution time: 0.485 ms
+
+```
+
+
+Index Scan could be skipped or forced using *hints*:
+
+```sql
+EXPLAIN ANALYSE
+ SELECT content->'name' as name
+  FROM resources
+ WHERE content @@ 'name.#.family.# /*-- noindex */ = "family-66666"'
+
+-- Timing is on.
+--                                                   QUERY PLAN
+-- ---------------------------------------------------------------------------------------------------------------
+--  Seq Scan on resources  (cost=0.00..43752.50 rows=1000 width=207) (actual time=38.876..441.147 rows=1 loops=1)
+--    Filter: (content @@ '"name".#."family".# /*-- noindex */  = "family-66666"'::jsquery)
+--    Rows Removed by Filter: 999999
+--  Planning time: 0.565 ms
+--  Execution time: 441.187 ms
+-- (5 rows)
+
+-- Time: 443,518 ms
+```
+
+TODO: jsonb_path_value_ops ???
+
+TODO: about vodka
+
+## More information
 
 Best place to find more information is to look at
 [tests](https://github.com/akorotkov/jsquery/blob/master/sql/jsquery.sql)
+
+## Conclusion
