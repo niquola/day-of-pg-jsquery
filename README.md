@@ -35,7 +35,7 @@ documents from open Health IT standard [FHIR](http://www.hl7.org/implement/stand
 If you have installed [docker](https://docs.docker.com/),
 just run new container:
 
-```
+```bash
 docker run --name=jsquery -p 5432:5555 -i -t niquola/day-of-pg-jsquery
 ```
 
@@ -91,22 +91,22 @@ Patient resource has attribute *name* with array of objects:
 
 ```json
 {
-  ...
+  //...
   "name": [
     {
      "use": "official",
      "given": ["Peter", "James"],
      "family": ["Chalmers"]
     },
-   ....
+   //....
   ],
-  ...
+  //...
 }
 ```
 
 Let's find all patients with given name "Peter":
 
-```SQL
+```sql
 SELECT content->'name'
   FROM resources
  WHERE content @@ $JS$
@@ -118,7 +118,7 @@ SELECT content->'name'
 Find all patients with given = "Duck"
 and family = "Donald":
 
-```SQL
+```sql
 SELECT content->'name' FROM resources
  WHERE content @@ $JS$
    resourceType="Patient" AND
@@ -139,7 +139,7 @@ Query consists of expressions.
 
 The simplest expression has form - `path predicate-operator value`:
 
-```SQL
+```sql
 resourceType = "Patient"
 name.#.given @> ["Duck"]
 ```
@@ -177,7 +177,7 @@ We could query for "Male" as:
 When we have array in path, we should use
 *#* (any element of array):
 
-```
+```sql
 name.#.given.# = "Peter"
 ```
 
@@ -245,9 +245,7 @@ Nothing interesting with numbers & booleans :)
 * a >= 10
 * a <= 10
 
-### IN
-
-*in* operator:
+### IN Operator
 
 ```
 SELECT * FROM resources
@@ -415,7 +413,6 @@ TODO: about vodka
 
 ## More information
 
-Best place to find more information is to look at
-[tests](https://github.com/akorotkov/jsquery/blob/master/sql/jsquery.sql)
+Best place to find more information is [tests](https://github.com/akorotkov/jsquery/blob/master/sql/jsquery.sql)
 
 ## Conclusion
