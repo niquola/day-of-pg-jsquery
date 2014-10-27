@@ -6,9 +6,8 @@ was introduced in Postgresql 9.4 by [Russian pg team](http://obartunov.livejourn
 Next challenge for pg team is advanced and efficient search in
 jsonb documents (jsquery and VODKA).
 
-This article is light introduction into new
-postgresql extension  *jsquery*.
-- query language for jsonb documents.
+This article is introduction into
+postgresql extension  *jsquery* - query language for jsonb documents.
 
 ## Installation
 
